@@ -10,7 +10,7 @@ from telegram.ext.filters import Filters
 
 from pb_cfg import LOGGER_NAME
 from pvt_cfg import TELEGRAM_API_TOKEN
-from queues import RxMessageQ, TxMessageQ, RxMessageQItem, TxMessageQItem
+from queues import OUTBOUND_MSG_QUEUE, INBOUND_MSG_QUEUE, RxQItem, TxQItem
 
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -19,7 +19,7 @@ logger = logging.getLogger(LOGGER_NAME)
 class TelegramAbstractionLayer():
     ''' I/O with telegram server '''
 
-    def __init__(self, api_key, auto_start=True):
+    def __init__(self, api_key):
 
         self._exit_lock = Lock()
 
@@ -29,15 +29,6 @@ class TelegramAbstractionLayer():
         self._tx_thread = None
         # 'Updater' telegram instance
         self._rx_thread = None
-
-        # Trafic coming from the user is divided in three queues
-        self.rx_q = RxMessageQ()
-
-        # Ouput trafic in a single queue
-        self.tx_q = TxMessageQ()
-
-        if auto_start:
-            self.start()
 
     def start(self):
         ''' start the main loop '''
@@ -85,22 +76,73 @@ class TelegramAbstractionLayer():
         logger.debug('TXT {}: {}'.format(
             update.message.message_id, update.message.text))
 
-        self.rx_q.put(RxMessageQItem(
-            RxMessageQItem.TEXT_MSG, args=[update, context]))
+        # Attempt to get the IDs
+        if update.message:
+            chat_id = update.message.chat.id
+            user_id = update.message.from_user.id
+        elif update.edited_message:
+            # TODO should we take in eddited messages ?
+            return
+        else:
+            logger.error('Received update without message: {}'.format(update))
+            return
+
+        INBOUND_MSG_QUEUE.put(RxQItem(
+            RxQItem.TEXT_MSG,
+            route_by=RxQItem.ROUTE_BY_CHAT_ID | RxQItem.ROUTE_BY_USER_ID,
+            chat_id=chat_id,
+            user_id=user_id,
+            args=[update]))
+        # Context seems to contain a lock so it cannot be pickled not put into a q
+        # args=[update, context]))
 
     def command_handler(self, update, context):
         ''' forward command messages '''
         logger.debug('CMD {}: {}'.format(
             update.message.message_id, update.message.text))
-        self.rx_q.put(RxMessageQItem(
-            RxMessageQItem.COMMAND_MSG, args=[update, context]))
+
+        # Attempt to get the IDs
+        if update.message:
+            chat_id = update.message.chat.id
+            user_id = update.message.from_user.id
+        elif update.edited_message:
+            # TODO should we take in eddited messages ?
+            return
+        else:
+            logger.error('Received update without message: {}'.format(update))
+            return
+
+        INBOUND_MSG_QUEUE.put(RxQItem(
+            RxQItem.COMMAND_MSG,
+            route_by=RxQItem.ROUTE_BY_CHAT_ID | RxQItem.ROUTE_BY_USER_ID,
+            chat_id=chat_id,
+            user_id=user_id,
+            args=[update]))
+        # Context seems to contain a lock so it cannot be pickled not put into a q
+        # args=[update, context]))
 
     def callback_query_handler(self, update, context):
         ''' forward callback messages '''
         logger.debug('CBK QRY {}: {}'.format(
             update.message.message_id, update.message.text))
-        self.rx_q.put(RxMessageQItem(
-            RxMessageQItem.CALLBACK_QUERY_MSG, args=[update, context]))
+
+        # Attempt to get the IDs
+        if update.callback_query:
+            chat_id = update.callback_query.chat_instance
+            user_id = update.callback_query.from_user.id
+        else:
+            logger.error(
+                'Received update without callback_query: {}'.format(update))
+            return
+
+        INBOUND_MSG_QUEUE.put(RxQItem(
+            RxQItem.CALLBACK_QUERY_MSG,
+            route_by=RxQItem.ROUTE_BY_CHAT_ID | RxQItem.ROUTE_BY_USER_ID,
+            chat_id=chat_id,
+            user_id=user_id,
+            args=[update]))
+        # Context seems to contain a lock so it cannot be pickled not put into a q
+        # args=[update, context]))
 
     def stop(self):
         ''' stop the main loop '''
@@ -131,20 +173,20 @@ class TelegramAbstractionLayer():
         while True:
 
             # Pop output_q and send the messages
-            if not self.tx_q.empty():
-                msg = self.tx_q.get()
+            if not OUTBOUND_MSG_QUEUE.empty():
+                msg = OUTBOUND_MSG_QUEUE.get()
 
-                if msg.kind == TxMessageQItem.SEND_MESSAGE:
+                if msg.kind == TxQItem.SEND_MESSAGE:
                     self._bot.send_message(*msg.args, **msg.kwargs)
-                elif msg.kind == TxMessageQItem.SEND_PHOTO:
+                elif msg.kind == TxQItem.SEND_PHOTO:
                     self._bot.send_photo(*msg.args, **msg.kwargs)
-                elif msg.kind == TxMessageQItem.SEND_POLL:
+                elif msg.kind == TxQItem.SEND_POLL:
                     self._bot.send_poll(*msg.args, **msg.kwargs)
-                elif msg.kind == TxMessageQItem.SEND_STICKER:
+                elif msg.kind == TxQItem.SEND_STICKER:
                     self._bot.send_sticker(*msg.args, **msg.kwargs)
-                elif msg.kind == TxMessageQItem.ANSWER_CALLBACK_QUERY:
+                elif msg.kind == TxQItem.ANSWER_CALLBACK_QUERY:
                     self._bot.answer_callback_query(*msg.args, **msg.kwargs)
-                elif msg.kind == TxMessageQItem.ANSWER_INLINE_QUERY:
+                elif msg.kind == TxQItem.ANSWER_INLINE_QUERY:
                     self._bot.answerInlineQuery(*msg.args, **msg.kwargs)
                 else:
                     raise NotImplementedError
@@ -153,20 +195,3 @@ class TelegramAbstractionLayer():
                 break
 
         logger.info('Stopping {}:_tx_thread'.format(type(self).__name__))
-
-
-if __name__ == '__main__':
-    logger.setLevel(level=logging.DEBUG)
-    console_log = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '%(asctime)s %(levelname)s %(lineno)4d:%(filename)s(%(process)d) - %(message)s')
-    console_log.setFormatter(formatter)
-    logger.addHandler(console_log)
-
-    tal = TelegramAbstractionLayer(TELEGRAM_API_TOKEN)
-
-    try:
-        while True:
-            time.sleep(1)
-    finally:
-        tal.stop()
