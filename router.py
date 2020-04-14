@@ -58,8 +58,8 @@ class Router(StoppableThread):
                 elif result == self.COULD_NOT_ROUTE:
                     # New 'user'
                     next_message.delivery_attempts += 1
-                    msg = {'task': MasterInstance.TASK_GREET_NEW_USER,
-                           'args': [next_message]}
+                    msg = {'task': MasterInstance.TASK_HANDLE_NEW_USER,
+                           'msg': next_message}
                     self.IM.send_to_master_instance(msg)
 
             if self.should_stop():
@@ -71,6 +71,8 @@ class Router(StoppableThread):
         by_game_code = []
         by_chat_id = []
         by_user_id = []
+
+        logger.debug('Routing -- {}'.format(msg))
 
         # Shoule we route by GROUP
         if bool(msg.route_by & RxQItem.ROUTE_BY_GAME_CODE):

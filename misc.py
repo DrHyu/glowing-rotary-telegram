@@ -82,9 +82,10 @@ class StoppableProcess(ABC):
         ''' warm stop the thread '''
 
         logger.info('Stopping {}'.format(type(self).__name__))
-        if not self._process or not self._exit_lock.acquire(block=False):
-            logger.error('Thread for {} is not currently running !'.format(
+        if not self._process or self._exit_lock.acquire(block=False):
+            logger.error('Process for {} is not currently running !'.format(
                 type(self).__name__))
+            self._exit_lock.release()
             return True
 
         # Exit condition
@@ -92,7 +93,7 @@ class StoppableProcess(ABC):
         # Wait for it to join
         self._process.join(2)
 
-        return self._process.exitcode is None
+        return self._process.exitcode is not None
 
     def terminate(self):
         self._process.terminate()
@@ -109,3 +110,14 @@ class StoppableProcess(ABC):
 
     def should_stop(self):
         return self._exit_lock.acquire(block=False)
+
+
+def get_chat_id_from_update(update):
+
+    if update.callback_query is not None:
+        # Callback querry message, chat id is in callback_querry.message.chat.id
+        return update.callback_query.message.chat.id
+    elif update.message is not None:
+        return update.message.chat.id
+    else:
+        return None

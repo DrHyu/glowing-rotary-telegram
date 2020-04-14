@@ -4,6 +4,8 @@ import time
 import logging
 from threading import Lock, Thread
 
+from inspect import signature
+
 from telegram import Bot
 from telegram.ext import Updater, CallbackQueryHandler, MessageHandler
 from telegram.ext.filters import Filters
@@ -92,7 +94,7 @@ class TelegramAbstractionLayer():
             route_by=RxQItem.ROUTE_BY_CHAT_ID | RxQItem.ROUTE_BY_USER_ID,
             chat_id=chat_id,
             user_id=user_id,
-            args=[update]))
+            kwargs={'update': update}))
         # Context seems to contain a lock so it cannot be pickled not put into a q
         # args=[update, context]))
 
@@ -117,14 +119,12 @@ class TelegramAbstractionLayer():
             route_by=RxQItem.ROUTE_BY_CHAT_ID | RxQItem.ROUTE_BY_USER_ID,
             chat_id=chat_id,
             user_id=user_id,
-            args=[update]))
+            kwargs={'update': update}))
         # Context seems to contain a lock so it cannot be pickled not put into a q
         # args=[update, context]))
 
     def callback_query_handler(self, update, context):
         ''' forward callback messages '''
-        logger.debug('CBK QRY {}: {}'.format(
-            update.message.message_id, update.message.text))
 
         # Attempt to get the IDs
         if update.callback_query:
@@ -135,12 +135,17 @@ class TelegramAbstractionLayer():
                 'Received update without callback_query: {}'.format(update))
             return
 
+        logger.debug('CBK QRY {}: DATA: {} MESSAGE: {}'.format(
+            update.callback_query.id,
+            update.callback_query.data,
+            update.callback_query.message.text))
+
         INBOUND_MSG_QUEUE.put(RxQItem(
             RxQItem.CALLBACK_QUERY_MSG,
             route_by=RxQItem.ROUTE_BY_CHAT_ID | RxQItem.ROUTE_BY_USER_ID,
             chat_id=chat_id,
             user_id=user_id,
-            args=[update]))
+            kwargs={'update': update}))
         # Context seems to contain a lock so it cannot be pickled not put into a q
         # args=[update, context]))
 
@@ -172,26 +177,42 @@ class TelegramAbstractionLayer():
         logger.info('Staring {}:_tx_thread'.format(type(self).__name__))
         while True:
 
+            if self._exit_lock.acquire(blocking=False):
+                break
+
             # Pop output_q and send the messages
             if not OUTBOUND_MSG_QUEUE.empty():
                 msg = OUTBOUND_MSG_QUEUE.get()
 
-                if msg.kind == TxQItem.SEND_MESSAGE:
-                    self._bot.send_message(*msg.args, **msg.kwargs)
-                elif msg.kind == TxQItem.SEND_PHOTO:
-                    self._bot.send_photo(*msg.args, **msg.kwargs)
-                elif msg.kind == TxQItem.SEND_POLL:
-                    self._bot.send_poll(*msg.args, **msg.kwargs)
-                elif msg.kind == TxQItem.SEND_STICKER:
-                    self._bot.send_sticker(*msg.args, **msg.kwargs)
-                elif msg.kind == TxQItem.ANSWER_CALLBACK_QUERY:
-                    self._bot.answer_callback_query(*msg.args, **msg.kwargs)
-                elif msg.kind == TxQItem.ANSWER_INLINE_QUERY:
-                    self._bot.answerInlineQuery(*msg.args, **msg.kwargs)
-                else:
-                    raise NotImplementedError
+                if msg.func_call:
+                    # If a message has the func_call parameter set
+                    # The is meant to call 'func_call' function of the Telegram Bot
+                    # args and kwargs are passed as parameters
+                    try:
+                        method = getattr(self._bot, msg.func_call)
 
-            if self._exit_lock.acquire(blocking=False):
-                break
+                        # For debugging purposes compare the arguments passed in the queue
+                        # with those in the official purpose
+                        sig = signature(method)
+                        args = [p.name for p in sig.parameters.values() if (p.default == p.empty) and (p.name != 'kwargs')]  # nopep8
+                        kwargs = [p.name for p in sig.parameters.values() if (p.default != p.empty)]  # nopep8
+
+                        for param in msg.kwargs:
+                            if param not in kwargs:
+                                logger.error('Function {} takes {} params. Param {} is not defined'.format(
+                                    msg.func_call, sig, param))
+                                continue
+
+                        if len(args) != len(msg.args):
+                            logger.error('Function {} takes {} params. {} positional argument but {} provided'.format(
+                                msg.func_call, sig, len(args), len(msg.args)))
+                            continue
+
+                        method(*msg.args, **msg.kwargs)
+
+                    except AttributeError:
+                        logger.error(
+                            'Could not find method {} in Bot'.format(msg.func_call))
+                        continue
 
         logger.info('Stopping {}:_tx_thread'.format(type(self).__name__))

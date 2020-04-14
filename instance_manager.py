@@ -121,7 +121,6 @@ class InstanceManager(StoppableThread):
     def _stop_all_instances(self):
         ''' attempt to stop all instances '''
 
-        logger.info('Stopping master instance ...'.format())
         if not self._master_instance.stop():
             logger.error('Failed to gracefully master instance')
             logger.error('Attempting to kill it')

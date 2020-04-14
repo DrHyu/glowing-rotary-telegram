@@ -2,8 +2,9 @@
 
 
 import logging
-
 import time
+
+import coloredlogs
 
 from queues import INBOUND_MSG_QUEUE, OUTBOUND_MSG_QUEUE
 from telegram_abstraction_layer import TelegramAbstractionLayer
@@ -45,10 +46,14 @@ def main():
 
 
 if __name__ == '__main__':
-    logger.setLevel(level=logging.DEBUG)
-    console_log = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '%(asctime)s %(levelname)s %(lineno)d:%(filename)s(%(process)d) - %(message)s')
-    console_log.setFormatter(formatter)
-    logger.addHandler(console_log)
+    # logger.setLevel(level=logging.DEBUG)
+    # console_log = logging.StreamHandler()
+    # formatter = logging.Formatter(
+    #     '%(asctime)s %(levelname)s %(lineno)d:%(filename)s(%(process)d) - %(message)s')
+
+    coloredlogs.install(level='DEBUG', logger=logger,
+                        fmt='%(asctime)s %(levelname)-5s %(lineno)-4d:%(filename)-30s - %(message)s')
+
+    # console_log.setFormatter(formatter)
+    # logger.addHandler(console_log)
     main()
