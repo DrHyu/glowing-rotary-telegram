@@ -2,6 +2,9 @@
 import logging
 
 from multiprocessing import Queue
+import multiprocessing as mp
+import multiprocessing.queues as mpq
+
 from pb_cfg import LOGGER_NAME
 
 logger = logging.getLogger(LOGGER_NAME)
@@ -58,6 +61,7 @@ class RxQItem():
     def __repr__(self):
         return self.__str__()
 
+
 # class RxMessageQ(queue.Queue):
 #     '''type check put func'''
 
@@ -77,16 +81,47 @@ class TxQItem():
         self.args = args if args else []
         self.kwargs = kwargs if kwargs else {}
 
+    def __str__(self):
+        return 'Func: {} Args: {} Kwargs: {}'.format(self.func_call, self.args, self.kwargs)
 
-# class TxMessageQ(queue.Queue):
-#     '''type check put func'''
+    def __repr__(self):
+        return self.__str__()
 
-#     def put(self, item: TxQItem, *args, **kwargs):
-#         super().put(item, *args, **kwargs)
+
+class TxMessageQ(mpq.Queue):
+    '''
+        The idea is to call the Queue as if calling the telegram bot directly
+        eg: queue_instance.send_message(chat_id, text, parse_mode=None, ...)
+        The __getattr__ will catch this function calls, transform them into TxQItem and call put()
+        On the other end of the Queue, the bot will take TxQItem execute the func_calls
+    '''
+
+    def __init__(self, *args, **kwargs):
+        ctx = mp.get_context()
+        super().__init__(*args, **kwargs, ctx=ctx)
+
+    def __getattr__(self, attr):
+        '''
+            When trying to get an attribute that doesn't exist return a callable (lambda here)
+            eg. user calls:
+                queue_instance.send_message(chat_id, text, parse_mode=None, ...)
+                The attr requested is only the 'name' of the func, so 'send_message'
+            we return:
+                lambda *args, **kwargs: self.put_func_call('send_message', *args, **kwargs)
+            the user executes the lambda func which essentially becomes:
+                queue_instance.put_func_call('send_message', chat_id, text, parse_mode=None, ...)
+        '''
+        return lambda *args, **kwargs: self.put_func_call(attr, *args, **kwargs)
+
+    def put_func_call(self, func_name, *args, **kwargs):
+        ''' Initialize and put() a TxQItem in the queue '''
+        # logger.debug('{}{}{}'.format(func_name, args, kwargs))
+        item = TxQItem(func_call=func_name, args=args, kwargs=kwargs)
+        self.put(item)
+        logger.debug('Put item: {}'.format(item))
 
 
 # There are three 'kinds' of queues
-
 # 1- Inbound queue:
 # Anyone can put items to this queue (Instances or Updater).
 # Only the router it allowed to get items from it.
@@ -99,7 +134,7 @@ INBOUND_MSG_QUEUE = Queue()
 # Only the Bot is allowed to get from this queue
 # The bot will attempt to send every message in the Q with only the information
 # available in the Q item.
-OUTBOUND_MSG_QUEUE = Queue()
+OUTBOUND_MSG_QUEUE = TxMessageQ()
 # OUTBOUND_MSG_QUEUE = TxMessageQ()
 
 # 3- Instance input queue

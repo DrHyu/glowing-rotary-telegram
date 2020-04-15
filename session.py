@@ -42,10 +42,7 @@ class Session():
 
         if self.with_chat and self.output_q:
             # Send timeout message
-            self.output_q.put(
-                TxQItem(func_call='send_message',
-                        args=(self.with_chat, "Timeout! Bye Bye !!"))
-            )
+            self.output_q.send_message(self.with_chat, "Timeout! Bye Bye !!")
 
 
 class SelectGameSession(Session):
@@ -100,12 +97,9 @@ class SelectGameSession(Session):
                     ]
                 )
 
-                self.output_q.put(
-                    TxQItem(func_call='send_message',
-                            args=(msg.chat.id, text),
-                            kwargs={'reply_markup': deepcopy(keyboard_markup)}
-                            )
-                )
+                self.output_q.send_message(
+                    msg.chat.id, text, reply_markup=keyboard_markup)
+
                 self.state = self.S_GAME_OFFER_RESPONSE
 
                 self.with_chat = msg.chat.id
@@ -116,20 +110,15 @@ class SelectGameSession(Session):
                 pass
             elif self.state == self.S_GAME_OFFER_RESPONSE:
                 logger.debug('Hi !'.format())
-                if 'update' not in kwargs \
+                if 'update' not in kwargs
                         or not kwargs['update'].callback_query:
-                    self.state = self.S_ERROR
+                    self.state=self.S_ERROR
                     continue
 
-                upd = kwargs['update']
-                query = upd.callback_query
+                upd=kwargs['update']
+                query=upd.callback_query
 
-                # It is mandatory to answer callback querries
-                self.output_q.put(
-                    TxQItem(func_call='answer_callback_query',
-                            args=[query.id], kwargs={})
-                )
-
+                self.output_q.answer_callback_query(query.id)
                 # Get user selection
                 if not query.data or query.data == "" or int(query.data) >= len(self.GAMES):
                     # Strange answer
@@ -137,48 +126,40 @@ class SelectGameSession(Session):
                     return
 
                 # Delete the inline keyboard after the repply
-                self.output_q.put(
-                    TxQItem(func_call='edit_message_reply_markup',
-                            kwargs={'chat_id': query.message.chat.id, 'message_id': query.message.message_id, 'reply_markup': None})
-                )
+                self.output_q.edit_message_reply_markup(
+                    chat_id = query.message.chat.id,
+                    message_id = query.message.message_id,
+                    reply_markup = None)
 
-                self.game_selected = int(query.data)
-                self.state = self.S_GAME_SELECTED
+                self.game_selected=int(query.data)
+                self.state=self.S_GAME_SELECTED
 
             elif self.state == self.S_GAME_SELECTED:
                 if self.game_selected is None:
-                    self.state = self.S_ERROR
+                    self.state=self.S_ERROR
                     logger.error('No game selected !')
                     continue
 
-                text = "Great ! You have selected {}".format(
+                text="Great ! You have selected {}".format(
                     self.GAMES[self.game_selected]['name'])
 
-                self.output_q.put(
-                    TxQItem(func_call='send_message',
-                            args=(self.with_chat, text))
-                )
+                self.output_q.send_message(self.with_chat, text)
 
-                self.state = self.S_CREATE_GAME_INSTANCE
+                self.state=self.S_CREATE_GAME_INSTANCE
 
             elif self.state == self.S_CREATE_GAME_INSTANCE:
+                self.output_q.send_message(self.with_chat, 'Creating new game instance for {}'.format(
+                    self.GAMES[self.game_selected]['name']))
 
-                self.output_q.put(
-                    TxQItem(func_call='send_message',
-                            args=(
-                                self.with_chat,
-                                'Creating new game instance for {}'.format(
-                                    self.GAMES[self.game_selected]['name'])
-                            ))
-                )
-                pass
+                self.state=self.S_EXIT
 
             elif self.state == self.S_GAME_INSTANCE_CREATED:
                 pass
             elif self.state == self.S_REDIRECT_USER:
                 pass
             elif self.state == self.S_EXIT:
-                pass
+                break
+
             elif self.state == self.S_ERROR:
                 logger.error('Entered in error state !'.format())
                 break
